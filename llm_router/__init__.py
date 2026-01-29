@@ -11,11 +11,33 @@ from llm_router.schemas import (
     TOOL_VALID_STATES,
     is_tool_valid_for_state,
 )
+from llm_router.providers import (
+    ClaudeLLMProvider,
+    MockLLMProvider,
+    LLMError,
+    LLMTimeoutError,
+    LLMRateLimitError,
+    LLMResponseError,
+    create_provider,
+    get_default_provider,
+)
 
 __all__ = [
+    # Router
     "LLMRouter",
     "LLMProvider",
     "StubLLMProvider",
+    # Providers
+    "ClaudeLLMProvider",
+    "MockLLMProvider",
+    "create_provider",
+    "get_default_provider",
+    # Errors
+    "LLMError",
+    "LLMTimeoutError",
+    "LLMRateLimitError",
+    "LLMResponseError",
+    # Schemas
     "RouterDecision",
     "RouterIntent",
     "RouterTool",
