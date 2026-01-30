@@ -184,7 +184,18 @@ def main() -> None:
     print("🔧 Initializing...")
 
     store = InMemoryInvoiceStore()
-    router = LLMRouter(llm_provider=get_default_provider())
+
+    # Get LLM provider and show which one is being used
+    provider = get_default_provider()
+    provider_name = type(provider).__name__
+    print(f"🤖 LLM Provider: {provider_name}")
+
+    if provider_name == "ClaudeLLMProvider":
+        print("   ✅ Using Claude API for natural language understanding")
+    else:
+        print("   ⚠️  Using pattern-based fallback (set ANTHROPIC_API_KEY for Claude)")
+
+    router = LLMRouter(llm_provider=provider)
     orchestrator = InvoiceOrchestrator(store=store, router=router)
     adapter = WhatsAppAdapter(orchestrator=orchestrator)
 
