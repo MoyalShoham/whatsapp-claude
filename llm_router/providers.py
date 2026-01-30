@@ -11,6 +11,11 @@ import os
 import time
 from typing import Any, Optional
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from llm_router.schemas import (
     Confidence,
     RouterDecision,

@@ -26,6 +26,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv(project_root / ".env")
+
 from agents.invoice_agent import InvoiceOrchestrator
 from channels.whatsapp.adapter import WhatsAppAdapter
 from llm_router import LLMRouter, get_default_provider
