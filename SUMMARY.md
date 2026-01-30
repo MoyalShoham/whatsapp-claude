@@ -57,13 +57,20 @@ The ConversationalAgent provides a natural language interface:
 - Available tools: list_invoices, get_invoice_status, approve_invoice, reject_invoice, confirm_payment, create_dispute, close_invoice
 
 **Agent Capabilities:**
-- Context classification (BUSINESS vs PRIVATE conversations)
-- State machine awareness (respects valid transitions)
-- Proactive guidance (suggests workarounds for unsupported actions)
-- Israeli VAT handling (17% default)
-- Flexible intent interpretation (natural language to structured operations)
-- Single-question clarification policy (never asks multiple questions)
-- WhatsApp-optimized responses (concise, mobile-friendly)
+
+| Feature | Description |
+|---------|-------------|
+| Conversation Classification | BUSINESS vs PRIVATE context detection |
+| User Role Inference | Issuer / Payer / Unknown detection |
+| State Machine Awareness | Strict lifecycle enforcement with workaround suggestions |
+| Invoice Creation Flow | Progressive data collection, VAT handling |
+| Edit & Recreate Flow | Guides reject + recreate when edits requested |
+| Israeli VAT | 17% default, gross/net handling |
+| Reminders & Overdue | Time-aware suggestions for follow-ups |
+| VIP Detection | Returning customer recognition (silent) |
+| Error Handling | What happened → Why → What can be done |
+| Single-Question Policy | Never asks multiple clarifications at once |
+| WhatsApp UX | Short, mobile-friendly, no walls of text |
 
 ### 5. WhatsApp Channel (`channels/whatsapp/`)
 - **WhatsAppAdapter**: Message format conversion
