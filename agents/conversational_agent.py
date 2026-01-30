@@ -1,13 +1,19 @@
 """
-Conversational Invoice Agent - Natural language interface for invoice management.
+Conversational Invoice Agent - The ONLY LLM-based agent for invoice management.
 
-This agent uses Claude to have natural conversations while managing invoices.
-It parses tool calls from Claude's responses and executes them.
+This agent:
+- Loads business rules from agent_prompt.md (single source of truth)
+- Parses tool calls from Claude's responses
+- Delegates tool execution to InvoiceOrchestrator (FSM validator)
+
+Used by both SIMULATOR and PRODUCTION modes.
+The difference is configuration only, not code path.
 """
 
 import json
 import logging
 import re
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
@@ -18,51 +24,64 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+class AgentMode(Enum):
+    """Agent execution mode."""
+    SIMULATOR = "simulator"  # Local testing, no external calls
+    PRODUCTION = "production"  # Real WhatsApp API calls
+
+
 class ConversationalAgent:
     """
-    A conversational agent that manages invoices through natural dialogue.
+    The single LLM-based agent for invoice management.
 
-    Unlike the JSON router approach, this agent:
-    - Responds naturally in conversation
-    - Embeds tool calls in responses when actions are needed
-    - Handles context and state automatically
+    This agent:
+    - Loads prompt from agent_prompt.md (single source of truth)
+    - Uses Claude for natural language understanding
+    - Delegates all FSM operations to InvoiceOrchestrator
+    - Works in both SIMULATOR and PRODUCTION modes
+
+    Business rules live in agent_prompt.md, NOT in code.
     """
+
+    # Tool name to FSM trigger mapping
+    TOOL_TO_TRIGGER: dict[str, str] = {
+        "approve_invoice": "approve",
+        "reject_invoice": "reject",
+        "confirm_payment": "confirm_payment",
+        "create_dispute": "dispute",
+        "close_invoice": "close",
+    }
 
     def __init__(
         self,
-        store: Any,
+        orchestrator: Any,
         llm_provider: Any,
+        mode: AgentMode = AgentMode.SIMULATOR,
         prompt_path: Optional[Path] = None,
     ):
         """
         Initialize the conversational agent.
 
         Args:
-            store: Invoice store instance
-            llm_provider: LLM provider (ClaudeLLMProvider)
-            prompt_path: Path to agent prompt template
+            orchestrator: InvoiceOrchestrator for FSM operations.
+            llm_provider: LLM provider (ClaudeLLMProvider).
+            mode: SIMULATOR or PRODUCTION mode.
+            prompt_path: Path to agent prompt template.
         """
-        self.store = store
+        self.orchestrator = orchestrator
         self.llm_provider = llm_provider
+        self.mode = mode
         self.prompt_path = prompt_path or Path(__file__).parent.parent / "llm_router" / "agent_prompt.md"
         self._prompt_template: Optional[str] = None
 
-        # Tool implementations
-        self._tools = {
-            "list_invoices": self._tool_list_invoices,
-            "get_invoice_status": self._tool_get_invoice_status,
-            "approve_invoice": self._tool_approve_invoice,
-            "reject_invoice": self._tool_reject_invoice,
-            "confirm_payment": self._tool_confirm_payment,
-            "create_dispute": self._tool_create_dispute,
-            "close_invoice": self._tool_close_invoice,
-        }
+        logger.info(f"ConversationalAgent initialized in {mode.value} mode")
 
     @property
     def prompt_template(self) -> str:
-        """Load and cache prompt template."""
+        """Load and cache prompt template from agent_prompt.md."""
         if self._prompt_template is None:
             self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
+            logger.debug(f"Loaded prompt template from {self.prompt_path}")
         return self._prompt_template
 
     def process_message(
@@ -74,20 +93,22 @@ class ConversationalAgent:
         """
         Process a user message and return a natural response.
 
+        This is the main entry point for both SIMULATOR and PRODUCTION.
+
         Args:
-            message: User's message
-            customer_id: Customer identifier (phone number)
-            context: Additional context
+            message: User's message.
+            customer_id: Customer identifier (phone number).
+            context: Additional context (conversation history, etc).
 
         Returns:
-            Natural language response
+            Natural language response.
         """
         context = context or {}
 
-        # Build context string
+        # Build context string for the prompt
         context_str = self._build_context(customer_id, context)
 
-        # Build prompt
+        # Build prompt from template
         prompt = self.prompt_template.replace("{{user_message}}", message)
         prompt = prompt.replace("{{context}}", context_str)
 
@@ -107,17 +128,16 @@ class ConversationalAgent:
         """Build context string for the prompt."""
         lines = [f"Customer ID: {customer_id}"]
 
-        # Get customer's invoices
-        all_invoices = self.store.list_invoices()
-        if all_invoices:
-            lines.append(f"Total invoices in system: {len(all_invoices)}")
+        # Get customer's invoices from orchestrator
+        invoices = self.orchestrator.list_invoices()
+        if invoices:
+            lines.append(f"Total invoices in system: {len(invoices)}")
 
             # List active (non-closed) invoices
             active = []
-            for inv_id in all_invoices:
-                fsm = self.store.get_fsm(inv_id)
-                if fsm and fsm.current_state != "closed":
-                    active.append(f"  - {inv_id}: {fsm.current_state}")
+            for inv in invoices:
+                if inv["state"] != "closed":
+                    active.append(f"  - {inv['invoice_id']}: {inv['state']}")
 
             if active:
                 lines.append("Active invoices:")
@@ -163,8 +183,8 @@ class ConversationalAgent:
                 logger.warning(f"Invalid tool args: {tool_args_str}")
                 continue
 
-            # Execute tool
-            tool_result = self._execute_tool(tool_name, tool_args)
+            # Execute tool through orchestrator
+            tool_result = self._execute_tool(tool_name, tool_args, customer_id)
 
             # Replace tool call with result
             tool_call_text = match.group(0)
@@ -173,16 +193,78 @@ class ConversationalAgent:
 
         return self._clean_response(final_response)
 
-    def _execute_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        """Execute a tool and return the result."""
-        tool_fn = self._tools.get(tool_name)
+    def _execute_tool(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        customer_id: str,
+    ) -> dict[str, Any]:
+        """
+        Execute a tool through the orchestrator.
 
-        if not tool_fn:
+        The orchestrator handles FSM validation and audit.
+        """
+        invoice_id = args.get("invoice_id", "")
+        reason = args.get("reason", "")
+
+        try:
+            # Query tools (no state change)
+            if tool_name == "list_invoices":
+                invoices = self.orchestrator.list_invoices(
+                    state_filter=args.get("state_filter")
+                )
+                return {
+                    "success": True,
+                    "message": f"Found {len(invoices)} invoice(s)",
+                    "data": {"invoices": invoices},
+                }
+
+            elif tool_name == "get_invoice_status":
+                if not invoice_id:
+                    return {"success": False, "error": "Invoice ID required"}
+
+                fsm = self.orchestrator.get_invoice(invoice_id)
+                if not fsm:
+                    return {"success": False, "error": f"Invoice {invoice_id} not found"}
+
+                return {
+                    "success": True,
+                    "message": f"Invoice {invoice_id} is in state {fsm.current_state}",
+                    "data": {
+                        "invoice_id": invoice_id,
+                        "current_state": fsm.current_state,
+                        "available_actions": fsm.get_available_triggers(),
+                    },
+                }
+
+            # State-changing tools - delegate to orchestrator
+            trigger = self.TOOL_TO_TRIGGER.get(tool_name)
+            if trigger:
+                if not invoice_id:
+                    return {"success": False, "error": "Invoice ID required"}
+
+                result = self.orchestrator.execute_transition(
+                    invoice_id=invoice_id,
+                    trigger=trigger,
+                    customer_id=customer_id,
+                    reason=reason,
+                )
+
+                return {
+                    "success": result.success,
+                    "message": result.message,
+                    "error": result.error,
+                    "data": {
+                        "invoice_id": result.invoice_id,
+                        "previous_state": result.previous_state,
+                        "current_state": result.current_state,
+                    },
+                }
+
+            # Unknown tool
             logger.warning(f"Unknown tool: {tool_name}")
             return {"success": False, "error": f"Unknown tool: {tool_name}"}
 
-        try:
-            return tool_fn(**args)
         except Exception as e:
             logger.error(f"Tool {tool_name} failed: {e}")
             return {"success": False, "error": str(e)}
@@ -202,7 +284,7 @@ class ConversationalAgent:
             lines = [f"You have {len(invoices)} invoice(s):"]
             for inv in invoices:
                 state = inv["state"].replace("_", " ")
-                lines.append(f"• {inv['invoice_id']}: {state}")
+                lines.append(f"  - {inv['invoice_id']}: {state}")
             return "\n".join(lines)
 
         elif tool_name == "get_invoice_status":
@@ -212,7 +294,7 @@ class ConversationalAgent:
             return f"Invoice {inv_id} is currently: {state}"
 
         else:
-            # Generic success message
+            # Generic success message from orchestrator
             return result.get("message", "Done!")
 
     def _clean_response(self, response: str) -> str:
@@ -226,182 +308,12 @@ class ConversationalAgent:
 
         return response
 
-    # ========== Tool Implementations ==========
+    # ========== Convenience Methods ==========
 
-    def _tool_list_invoices(
-        self,
-        state_filter: Optional[str] = None,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """List all invoices."""
-        all_ids = self.store.list_invoices()
+    def create_invoice(self, invoice_id: str, customer_id: Optional[str] = None) -> Any:
+        """Create a new invoice (delegates to orchestrator)."""
+        return self.orchestrator.create_invoice(invoice_id, customer_id)
 
-        invoices = []
-        for inv_id in all_ids:
-            fsm = self.store.get_fsm(inv_id)
-            if fsm:
-                if state_filter and fsm.current_state != state_filter:
-                    continue
-                invoices.append({
-                    "invoice_id": inv_id,
-                    "state": fsm.current_state,
-                    "is_terminal": fsm.is_terminal,
-                })
-
-        return {
-            "success": True,
-            "message": f"Found {len(invoices)} invoice(s)",
-            "data": {"invoices": invoices},
-        }
-
-    def _tool_get_invoice_status(
-        self,
-        invoice_id: str,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Get invoice status."""
-        fsm = self.store.get_fsm(invoice_id)
-        if not fsm:
-            return {"success": False, "error": f"Invoice {invoice_id} not found"}
-
-        return {
-            "success": True,
-            "message": f"Invoice {invoice_id} is in state {fsm.current_state}",
-            "data": {
-                "invoice_id": invoice_id,
-                "current_state": fsm.current_state,
-                "available_actions": fsm.get_available_triggers(),
-            },
-        }
-
-    def _tool_approve_invoice(
-        self,
-        invoice_id: str,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Approve an invoice."""
-        fsm = self.store.get_fsm(invoice_id)
-        if not fsm:
-            return {"success": False, "error": f"Invoice {invoice_id} not found"}
-
-        if fsm.current_state != "awaiting_approval":
-            return {
-                "success": False,
-                "error": f"Cannot approve - invoice is in '{fsm.current_state}' state",
-            }
-
-        try:
-            fsm.trigger("approve")
-            self.store.save_fsm(fsm)
-            return {
-                "success": True,
-                "message": f"Invoice {invoice_id} has been approved!",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _tool_reject_invoice(
-        self,
-        invoice_id: str,
-        reason: str = "",
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Reject an invoice."""
-        fsm = self.store.get_fsm(invoice_id)
-        if not fsm:
-            return {"success": False, "error": f"Invoice {invoice_id} not found"}
-
-        if fsm.current_state != "awaiting_approval":
-            return {
-                "success": False,
-                "error": f"Cannot reject - invoice is in '{fsm.current_state}' state",
-            }
-
-        try:
-            fsm.trigger("reject")
-            self.store.save_fsm(fsm)
-            return {
-                "success": True,
-                "message": f"Invoice {invoice_id} has been rejected.",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _tool_confirm_payment(
-        self,
-        invoice_id: str,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Confirm payment for an invoice."""
-        fsm = self.store.get_fsm(invoice_id)
-        if not fsm:
-            return {"success": False, "error": f"Invoice {invoice_id} not found"}
-
-        if fsm.current_state != "payment_pending":
-            return {
-                "success": False,
-                "error": f"Cannot confirm payment - invoice is in '{fsm.current_state}' state",
-            }
-
-        try:
-            fsm.trigger("confirm_payment")
-            self.store.save_fsm(fsm)
-            return {
-                "success": True,
-                "message": f"Payment confirmed for invoice {invoice_id}. Thank you!",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _tool_create_dispute(
-        self,
-        invoice_id: str,
-        reason: str = "",
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Create a dispute for an invoice."""
-        fsm = self.store.get_fsm(invoice_id)
-        if not fsm:
-            return {"success": False, "error": f"Invoice {invoice_id} not found"}
-
-        if not fsm.can_trigger("dispute"):
-            return {
-                "success": False,
-                "error": f"Cannot create dispute from '{fsm.current_state}' state",
-            }
-
-        try:
-            fsm.trigger("dispute")
-            self.store.save_fsm(fsm)
-            return {
-                "success": True,
-                "message": f"Dispute created for invoice {invoice_id}. We'll review it shortly.",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _tool_close_invoice(
-        self,
-        invoice_id: str,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """Close an invoice."""
-        fsm = self.store.get_fsm(invoice_id)
-        if not fsm:
-            return {"success": False, "error": f"Invoice {invoice_id} not found"}
-
-        if not fsm.can_trigger("close"):
-            return {
-                "success": False,
-                "error": f"Cannot close - invoice must be 'paid' or 'rejected' first",
-            }
-
-        try:
-            fsm.trigger("close")
-            self.store.save_fsm(fsm)
-            return {
-                "success": True,
-                "message": f"Invoice {invoice_id} has been closed.",
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+    def get_invoice_state(self, invoice_id: str) -> Optional[str]:
+        """Get invoice state (delegates to orchestrator)."""
+        return self.orchestrator.get_invoice_state(invoice_id)

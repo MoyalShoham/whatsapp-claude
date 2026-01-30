@@ -1,6 +1,9 @@
 """
 FastAPI application for WhatsApp Business API webhook integration.
 
+This server uses the SAME ConversationalAgent as the simulator.
+The only difference is configuration (AgentMode.PRODUCTION).
+
 Endpoints:
 - GET /webhook  - Verification endpoint for Meta
 - POST /webhook - Receive incoming messages
@@ -14,30 +17,23 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.config import Settings, get_settings
 from server.whatsapp_client import WhatsAppClient
+from agents.conversational_agent import ConversationalAgent, AgentMode
 from agents.invoice_agent import InvoiceOrchestrator, AuditLog
-from llm_router import LLMRouter, get_default_provider
+from llm_router import get_default_provider
 from tools.base import InMemoryInvoiceStore
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# Request/Response Models
+# Response Models
 # ============================================================================
-
-
-class WebhookVerification(BaseModel):
-    """WhatsApp webhook verification query params."""
-
-    hub_mode: str = Query(..., alias="hub.mode")
-    hub_verify_token: str = Query(..., alias="hub.verify_token")
-    hub_challenge: str = Query(..., alias="hub.challenge")
 
 
 class HealthResponse(BaseModel):
@@ -45,6 +41,7 @@ class HealthResponse(BaseModel):
 
     status: str
     version: str
+    mode: str
     invoices_count: int
 
 
@@ -67,17 +64,52 @@ class AppState:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+
+        # Create shared store
         self.store = InMemoryInvoiceStore()
+
+        # Create orchestrator (FSM validator + tool executor + audit)
+        self.orchestrator = InvoiceOrchestrator(store=self.store)
+
+        # Create audit log
         self.audit_log = AuditLog()
-        self.router = LLMRouter(llm_provider=get_default_provider())
-        self.orchestrator = InvoiceOrchestrator(
-            store=self.store,
-            router=self.router,
+
+        # Create LLM provider
+        self.llm_provider = get_default_provider()
+
+        # Create conversational agent in PRODUCTION mode
+        self.agent = ConversationalAgent(
+            orchestrator=self.orchestrator,
+            llm_provider=self.llm_provider,
+            mode=AgentMode.PRODUCTION,
         )
+
+        # Create WhatsApp client
         self.whatsapp_client = WhatsAppClient(
             api_token=settings.whatsapp_api_token,
             phone_number_id=settings.whatsapp_phone_number_id,
         )
+
+        # Conversation history per phone number
+        self._conversations: dict[str, list[dict[str, Any]]] = {}
+
+    def add_to_history(self, phone: str, role: str, content: str) -> None:
+        """Add message to conversation history."""
+        if phone not in self._conversations:
+            self._conversations[phone] = []
+
+        self._conversations[phone].append({
+            "role": role,
+            "content": content,
+        })
+
+        # Keep last 10 messages
+        if len(self._conversations[phone]) > 10:
+            self._conversations[phone] = self._conversations[phone][-10:]
+
+    def get_history(self, phone: str) -> list[dict[str, Any]]:
+        """Get conversation history for a phone number."""
+        return self._conversations.get(phone, [])
 
 
 # Global state (will be initialized on startup)
@@ -108,6 +140,8 @@ async def lifespan(app: FastAPI):
     app_state = AppState(settings)
 
     logger.info(f"Server ready on {settings.host}:{settings.port}")
+    logger.info(f"Agent mode: PRODUCTION")
+    logger.info(f"LLM provider: {type(app_state.llm_provider).__name__}")
 
     yield
 
@@ -146,9 +180,7 @@ def create_app() -> FastAPI:
 # ============================================================================
 
 
-async def webhook_verify(
-    request: Request,
-) -> str:
+async def webhook_verify(request: Request) -> str:
     """
     Verify webhook subscription with Meta.
 
@@ -246,7 +278,7 @@ async def process_incoming_message(
     message: dict[str, Any],
     metadata: dict[str, Any],
 ) -> None:
-    """Process an incoming WhatsApp message."""
+    """Process an incoming WhatsApp message using ConversationalAgent."""
     global app_state
 
     if not app_state:
@@ -277,26 +309,24 @@ async def process_incoming_message(
             customer_id=phone,
         )
 
-        # Process through orchestrator
-        result = app_state.orchestrator.process_message(
+        # Add to conversation history
+        app_state.add_to_history(phone, "user", text)
+
+        # Process through ConversationalAgent (same code path as simulator)
+        context = {
+            "channel": "whatsapp",
+            "message_id": message_id,
+            "conversation_history": app_state.get_history(phone),
+        }
+
+        response_text = app_state.agent.process_message(
             message=text,
             customer_id=phone,
-            context={
-                "channel": "whatsapp",
-                "message_id": message_id,
-            },
+            context=context,
         )
 
-        # Format response
-        if result.requires_clarification and result.clarification_prompt:
-            response_text = result.clarification_prompt
-        else:
-            response_text = result.message
-
-        # Add state info if available
-        if result.current_state and result.invoice_id:
-            state_display = result.current_state.replace("_", " ").title()
-            response_text += f"\n\n📋 Invoice {result.invoice_id}: {state_display}"
+        # Add response to history
+        app_state.add_to_history(phone, "assistant", response_text)
 
         # Send response via WhatsApp API
         await app_state.whatsapp_client.send_message(
@@ -334,7 +364,8 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="healthy",
         version="1.0.0",
-        invoices_count=len(app_state.store.list_invoices()),
+        mode="production",
+        invoices_count=len(app_state.orchestrator.list_invoices()),
     )
 
 
@@ -346,15 +377,13 @@ async def list_invoices() -> list[InvoiceResponse]:
         raise HTTPException(status_code=503, detail="Service not ready")
 
     invoices = []
-    for invoice_id in app_state.store.list_invoices():
-        fsm = app_state.store.get_fsm(invoice_id)
-        if fsm:
-            invoices.append(InvoiceResponse(
-                invoice_id=invoice_id,
-                state=fsm.current_state,
-                is_terminal=fsm.is_terminal,
-                available_triggers=fsm.get_available_triggers(),
-            ))
+    for inv in app_state.orchestrator.list_invoices():
+        invoices.append(InvoiceResponse(
+            invoice_id=inv["invoice_id"],
+            state=inv["state"],
+            is_terminal=inv["is_terminal"],
+            available_triggers=inv["available_triggers"],
+        ))
 
     return invoices
 
@@ -366,7 +395,7 @@ async def get_invoice(invoice_id: str) -> InvoiceResponse:
     if not app_state:
         raise HTTPException(status_code=503, detail="Service not ready")
 
-    fsm = app_state.store.get_fsm(invoice_id.upper())
+    fsm = app_state.orchestrator.get_invoice(invoice_id.upper())
     if not fsm:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
@@ -394,11 +423,11 @@ async def create_invoice(request: CreateInvoiceRequest) -> InvoiceResponse:
     invoice_id = request.invoice_id.upper()
 
     # Check if exists
-    if app_state.store.get_fsm(invoice_id):
+    if app_state.orchestrator.get_invoice(invoice_id):
         raise HTTPException(status_code=409, detail="Invoice already exists")
 
     # Create
-    fsm = app_state.store.create_invoice(invoice_id)
+    fsm = app_state.orchestrator.create_invoice(invoice_id)
 
     return InvoiceResponse(
         invoice_id=fsm.invoice_id,
