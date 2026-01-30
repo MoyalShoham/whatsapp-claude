@@ -91,7 +91,10 @@ class WhatsAppAdapter:
         self._add_to_history(phone, "user", text)
 
         # Get active invoice context if not provided
-        effective_invoice_id = invoice_id or self._active_invoice.get(phone)
+        # Don't use cached invoice_id for list requests
+        list_keywords = ["all invoices", "my invoices", "list invoices", "show invoices", "active invoices", "pending invoices"]
+        is_list_request = any(kw in text.lower() for kw in list_keywords)
+        effective_invoice_id = None if is_list_request else (invoice_id or self._active_invoice.get(phone))
 
         # Build context with conversation history
         context = {

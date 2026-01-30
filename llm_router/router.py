@@ -45,12 +45,13 @@ class StubLLMProvider:
     # Keyword patterns for intent detection
     INTENT_PATTERNS: dict[RouterIntent, list[re.Pattern[str]]] = {
         RouterIntent.LIST_INVOICES: [
-            re.compile(r"\b(all|my|show|list)\s+(active\s+)?invoices\b", re.I),
-            re.compile(r"\blist\s+(all|my)?\s*invoices?\b", re.I),
-            re.compile(r"\bshow\s+(me\s+)?(all\s+)?(my\s+)?invoices?\b", re.I),
+            re.compile(r"\bshow\s+(me\s+)?(all\s+)?(the\s+)?(my\s+)?(active\s+)?(open\s+)?(pending\s+)?invoices\b", re.I),
+            re.compile(r"\blist\s+(all\s+)?(my\s+)?(the\s+)?(active\s+)?invoices?\b", re.I),
+            re.compile(r"\ball\s+(my\s+)?(active\s+)?(open\s+)?invoices\b", re.I),
             re.compile(r"\bwhat\s+invoices\b", re.I),
             re.compile(r"\bwhich\s+invoices\b", re.I),
             re.compile(r"\binvoices\s+(do\s+)?i\s+have\b", re.I),
+            re.compile(r"\bmy\s+invoices\b", re.I),
             re.compile(r"\bpending\s+invoices\b", re.I),
             re.compile(r"\bopen\s+invoices\b", re.I),
             re.compile(r"\bactive\s+invoices\b", re.I),
