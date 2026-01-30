@@ -110,7 +110,7 @@ class WhatsAppAdapter:
             )
         except Exception as e:
             logger.error(f"Error processing message: {e}")
-            response = "מצטער, אירעה שגיאה בעיבוד ההודעה. אנא נסה שוב."
+            response = "Sorry, an error occurred while processing your message. Please try again."
             self._add_to_history(phone, "assistant", response)
             return response
 
@@ -209,7 +209,7 @@ class WhatsAppAdapter:
         # Add state info if available
         if result.current_state and result.invoice_id:
             state_display = result.current_state.replace("_", " ").title()
-            parts.append(f"\n📋 סטטוס חשבונית {result.invoice_id}: {state_display}")
+            parts.append(f"\nInvoice {result.invoice_id} status: {state_display}")
 
         # Add available actions hint
         if result.raw_decision and not result.requires_clarification:
@@ -218,7 +218,7 @@ class WhatsAppAdapter:
                 triggers = available.get_available_triggers()
                 if triggers:
                     actions = ", ".join(t.replace("_", " ") for t in triggers[:3])
-                    parts.append(f"💡 פעולות אפשריות: {actions}")
+                    parts.append(f"Available actions: {actions}")
 
         # Add warnings if any
         if result.warnings:

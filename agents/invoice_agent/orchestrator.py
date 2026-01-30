@@ -468,6 +468,8 @@ class InvoiceOrchestrator:
 
         try:
             tool_args = decision.arguments.model_dump(exclude_none=True)
+            # Remove invoice_id from args since it's passed separately
+            tool_args.pop("invoice_id", None)
             tool_result = tool.run(effective_invoice_id, **tool_args)
         except Exception as e:
             logger.error(f"Tool execution failed: {e}")
