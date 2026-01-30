@@ -43,10 +43,27 @@ A production-ready Invoice Automation Agent that handles invoice lifecycle manag
 - **ConfirmPaymentTool**: Confirm payment received
 - **CloseInvoiceTool**: Close the invoice
 
-### 4. Agent (`agents/invoice_agent/`)
+### 4. Agent (`agents/`)
 - **InvoiceOrchestrator**: E2E flow controller
+- **ConversationalAgent**: Natural language interface for invoice management
 - **AuditLog**: Append-only audit trail
 - **EnhancedEventBus**: Event-driven architecture
+
+#### ConversationalAgent
+The ConversationalAgent provides a natural language interface:
+- Parses user messages using Claude API
+- Executes tool calls embedded in responses (format: `[TOOL: name]{args}[/TOOL]`)
+- Handles context-aware conversations
+- Available tools: list_invoices, get_invoice_status, approve_invoice, reject_invoice, confirm_payment, create_dispute, close_invoice
+
+**Agent Capabilities:**
+- Context classification (BUSINESS vs PRIVATE conversations)
+- State machine awareness (respects valid transitions)
+- Proactive guidance (suggests workarounds for unsupported actions)
+- Israeli VAT handling (17% default)
+- Flexible intent interpretation (natural language to structured operations)
+- Single-question clarification policy (never asks multiple questions)
+- WhatsApp-optimized responses (concise, mobile-friendly)
 
 ### 5. WhatsApp Channel (`channels/whatsapp/`)
 - **WhatsAppAdapter**: Message format conversion
@@ -174,6 +191,7 @@ pytest tests/test_server.py
 ```
 whatsapp-agent/
 ├── agents/
+│   ├── conversational_agent.py  # Natural language agent
 │   └── invoice_agent/
 │       ├── agent.py           # Base agent
 │       ├── orchestrator.py    # E2E flow
@@ -191,7 +209,8 @@ whatsapp-agent/
 │   ├── router.py             # Main router
 │   ├── providers.py          # LLM providers
 │   ├── schemas.py            # Pydantic models
-│   └── prompt.md             # System prompt
+│   ├── prompt.md             # Router system prompt
+│   └── agent_prompt.md       # Conversational agent prompt
 ├── scheduler/
 │   ├── __init__.py           # Module exports
 │   └── tasks.py              # Background tasks
@@ -230,6 +249,7 @@ whatsapp-agent/
 - [x] Invoice Data Model (amounts, line items, addresses)
 - [x] Scheduled Tasks (reminders, follow-ups, overdue checks)
 - [x] PDF Generation (with reportlab support)
+- [x] Conversational Agent (natural language interface)
 - [ ] Rate Limiting
 - [ ] Metrics & Monitoring
 

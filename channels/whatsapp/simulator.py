@@ -30,9 +30,8 @@ sys.path.insert(0, str(project_root))
 from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
 
-from agents.invoice_agent import InvoiceOrchestrator
-from channels.whatsapp.adapter import WhatsAppAdapter
-from llm_router import LLMRouter, get_default_provider
+from agents.conversational_agent import ConversationalAgent
+from llm_router import get_default_provider
 from tools.base import InMemoryInvoiceStore
 
 
@@ -81,11 +80,16 @@ def print_state_table(store: InMemoryInvoiceStore, invoice_id: str) -> None:
 
 def handle_command(
     cmd: str,
-    adapter: WhatsAppAdapter,
+    store: "InMemoryInvoiceStore",
     phone: str,
 ) -> bool:
     """
     Handle simulator commands.
+
+    Args:
+        cmd: The command string
+        store: Invoice store instance
+        phone: Simulated phone number
 
     Returns:
         True if should continue, False if should exit.
@@ -105,16 +109,16 @@ def handle_command(
             print("❌ Usage: /create INV-XXX")
         else:
             invoice_id = parts[1].upper()
-            adapter.create_invoice(invoice_id)
+            store.create_invoice(invoice_id)
             print(f"✅ Created invoice: {invoice_id}")
-            print_state_table(adapter.orchestrator.store, invoice_id)
+            print_state_table(store, invoice_id)
 
     elif command == "/state":
         if len(parts) < 2:
             print("❌ Usage: /state INV-XXX")
         else:
             invoice_id = parts[1].upper()
-            print_state_table(adapter.orchestrator.store, invoice_id)
+            print_state_table(store, invoice_id)
 
     elif command == "/advance":
         if len(parts) < 3:
@@ -125,45 +129,43 @@ def handle_command(
             invoice_id = parts[1].upper()
             trigger = parts[2].lower()
             try:
-                result = adapter.orchestrator.advance_invoice(
-                    invoice_id=invoice_id,
-                    trigger=trigger,
-                    customer_id=phone,
-                )
-                print(f"✅ Transition: {result['previous_state']} → {result['current_state']}")
-                print_state_table(adapter.orchestrator.store, invoice_id)
+                fsm = store.get_fsm(invoice_id)
+                if not fsm:
+                    print(f"❌ Invoice {invoice_id} not found")
+                else:
+                    previous = fsm.current_state
+                    fsm.trigger(trigger)
+                    store.save_fsm(fsm)
+                    print(f"✅ Transition: {previous} → {fsm.current_state}")
+                    print_state_table(store, invoice_id)
             except Exception as e:
                 print(f"❌ Error: {e}")
 
     elif command == "/list":
-        invoices = adapter.orchestrator.store.list_invoices()
+        invoices = store.list_invoices()
         if not invoices:
             print("📭 No invoices found. Use /create INV-XXX to create one.")
         else:
             print("\n📋 Invoices:")
             for inv_id in invoices:
-                fsm = adapter.orchestrator.store.get_fsm(inv_id)
+                fsm = store.get_fsm(inv_id)
                 state = fsm.current_state if fsm else "unknown"
                 print(f"   • {inv_id}: {state}")
             print()
 
     elif command == "/context":
-        active_inv = adapter.get_active_invoice(phone)
-        history = adapter._get_history(phone)
         print(f"\n📱 Phone: {phone}")
-        print(f"📋 Active Invoice: {active_inv or 'None'}")
-        print(f"💬 Messages in history: {len(history)}")
-        if history:
-            print("\nRecent messages:")
-            for msg in history[-3:]:
-                role = "You" if msg["role"] == "user" else "Bot"
-                content = msg["content"][:50] + "..." if len(msg["content"]) > 50 else msg["content"]
-                print(f"   {role}: {content}")
+        invoices = store.list_invoices()
+        if invoices:
+            print(f"📋 Total invoices: {len(invoices)}")
+            active = [i for i in invoices if store.get_fsm(i) and store.get_fsm(i).current_state != "closed"]
+            print(f"📌 Active invoices: {len(active)}")
+        else:
+            print("📋 No invoices")
         print()
 
     elif command == "/clear":
-        adapter.clear_context(phone)
-        print("✅ Context cleared")
+        print("✅ Context cleared (note: conversation history is per-session)")
 
     elif command.startswith("/"):
         print(f"❓ Unknown command: {command}")
@@ -195,9 +197,8 @@ def main() -> None:
     else:
         print("   ⚠️  Using pattern-based fallback (set ANTHROPIC_API_KEY for Claude)")
 
-    router = LLMRouter(llm_provider=provider)
-    orchestrator = InvoiceOrchestrator(store=store, router=router)
-    adapter = WhatsAppAdapter(orchestrator=orchestrator)
+    # Create conversational agent
+    agent = ConversationalAgent(store=store, llm_provider=provider)
 
     phone = "+972500000000"
 
@@ -215,7 +216,7 @@ def main() -> None:
 
             # Check if it's a command
             if user_input.startswith("/") or user_input.lower() == "exit":
-                should_continue = handle_command(user_input, adapter, phone)
+                should_continue = handle_command(user_input, store, phone)
                 if not should_continue:
                     break
                 continue
@@ -224,7 +225,7 @@ def main() -> None:
             timestamp = datetime.now().strftime("%H:%M")
             print(f"[{timestamp}] Sending...")
 
-            response = adapter.handle_incoming(phone, user_input)
+            response = agent.process_message(user_input, phone)
 
             # Print response with formatting
             print(f"\n🤖 Bot [{timestamp}]:")
