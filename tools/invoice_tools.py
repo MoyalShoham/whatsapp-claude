@@ -64,6 +64,75 @@ class ResolveDisputeInput(BaseModel):
 # ============================================================================
 
 
+class ListInvoicesTool(BaseInvoiceTool):
+    """Tool to list all invoices or filter by state."""
+
+    name = "list_invoices"
+    description = (
+        "List all invoices in the system, optionally filtered by state. "
+        "Use this when user asks about all invoices, active invoices, or invoices in a specific state."
+    )
+
+    def _execute(
+        self,
+        invoice_id: str = "",  # Not used but required by base class
+        state_filter: Optional[str] = None,
+        **kwargs: Any,
+    ) -> ToolResult:
+        # Get all invoices from store
+        all_invoice_ids = self.store.list_invoices()
+
+        if not all_invoice_ids:
+            return ToolResult(
+                success=True,
+                message="No invoices found in the system.",
+                data={"invoices": [], "total": 0},
+            )
+
+        # Build invoice list with states
+        invoices = []
+        for inv_id in all_invoice_ids:
+            fsm = self._get_fsm(inv_id)
+            if fsm:
+                # Apply state filter if provided
+                if state_filter and fsm.current_state != state_filter:
+                    continue
+                invoices.append({
+                    "invoice_id": inv_id,
+                    "state": fsm.current_state,
+                    "is_terminal": fsm.is_terminal,
+                })
+
+        if not invoices:
+            if state_filter:
+                return ToolResult(
+                    success=True,
+                    message=f"No invoices found with state '{state_filter}'.",
+                    data={"invoices": [], "total": 0, "filter": state_filter},
+                )
+            return ToolResult(
+                success=True,
+                message="No invoices found.",
+                data={"invoices": [], "total": 0},
+            )
+
+        # Build response message
+        invoice_list = "\n".join(
+            f"  - {inv['invoice_id']}: {inv['state']}" for inv in invoices
+        )
+        message = f"Found {len(invoices)} invoice(s):\n{invoice_list}"
+
+        return ToolResult(
+            success=True,
+            message=message,
+            data={
+                "invoices": invoices,
+                "total": len(invoices),
+                "filter": state_filter,
+            },
+        )
+
+
 class GetInvoiceStatusTool(BaseInvoiceTool):
     """Tool to get the current status of an invoice."""
 
@@ -473,6 +542,7 @@ class CloseInvoiceTool(BaseInvoiceTool):
 def get_all_tools(store: Optional[InvoiceStore] = None) -> list[BaseInvoiceTool]:
     """Get all invoice tools with the given store."""
     return [
+        ListInvoicesTool(store),
         GetInvoiceStatusTool(store),
         ApproveInvoiceTool(store),
         RejectInvoiceTool(store),

@@ -35,6 +35,7 @@ from tools.invoice_tools import (
     ConfirmPaymentTool,
     CreateDisputeTool,
     GetInvoiceStatusTool,
+    ListInvoicesTool,
     RejectInvoiceTool,
     ResendInvoiceTool,
     ResolveDisputeTool,
@@ -275,6 +276,7 @@ class InvoiceOrchestrator:
 
         # Initialize tools
         self._tools = {
+            RouterTool.LIST_INVOICES: ListInvoicesTool(self.store),
             RouterTool.GET_INVOICE_STATUS: GetInvoiceStatusTool(self.store),
             RouterTool.APPROVE_INVOICE: ApproveInvoiceTool(self.store),
             RouterTool.REJECT_INVOICE: RejectInvoiceTool(self.store),
@@ -428,7 +430,8 @@ class InvoiceOrchestrator:
 
         # Step 5: Get invoice ID from decision if not provided
         effective_invoice_id = invoice_id or decision.arguments.invoice_id
-        if not effective_invoice_id and decision.tool != RouterTool.NONE:
+        # LIST_INVOICES doesn't require an invoice_id
+        if not effective_invoice_id and decision.tool not in [RouterTool.NONE, RouterTool.LIST_INVOICES]:
             return OrchestrationResult(
                 success=False,
                 message="Invoice ID is required for this action",
@@ -470,7 +473,8 @@ class InvoiceOrchestrator:
             tool_args = decision.arguments.model_dump(exclude_none=True)
             # Remove invoice_id from args since it's passed separately
             tool_args.pop("invoice_id", None)
-            tool_result = tool.run(effective_invoice_id, **tool_args)
+            # For list_invoices, invoice_id can be empty
+            tool_result = tool.run(effective_invoice_id or "", **tool_args)
         except Exception as e:
             logger.error(f"Tool execution failed: {e}")
             raise ToolError(

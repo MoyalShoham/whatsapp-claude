@@ -15,6 +15,7 @@ class RouterIntent(str, Enum):
     PAYMENT_CONFIRMATION = "payment_confirmation"
     INVOICE_DISPUTE = "invoice_dispute"
     REQUEST_INVOICE_COPY = "request_invoice_copy"
+    LIST_INVOICES = "list_invoices"
     GENERAL_QUESTION = "general_question"
     UNKNOWN = "unknown"
 
@@ -23,6 +24,7 @@ class RouterTool(str, Enum):
     """Valid tools the router can recommend."""
 
     GET_INVOICE_STATUS = "get_invoice_status"
+    LIST_INVOICES = "list_invoices"
     APPROVE_INVOICE = "approve_invoice"
     REJECT_INVOICE = "reject_invoice"
     CONFIRM_PAYMENT = "confirm_payment"
@@ -50,6 +52,7 @@ class ToolArguments(BaseModel):
     approver_id: Optional[str] = Field(None, description="ID of the approver")
     payment_reference: Optional[str] = Field(None, description="Payment reference number")
     payment_method: Optional[str] = Field(None, description="Payment method used")
+    state_filter: Optional[str] = Field(None, description="Filter invoices by state")
 
     @field_validator("invoice_id")
     @classmethod
@@ -137,6 +140,7 @@ INTENT_TOOL_MAPPING: dict[RouterIntent, list[RouterTool]] = {
     RouterIntent.PAYMENT_CONFIRMATION: [RouterTool.CONFIRM_PAYMENT],
     RouterIntent.INVOICE_DISPUTE: [RouterTool.CREATE_DISPUTE],
     RouterIntent.REQUEST_INVOICE_COPY: [RouterTool.RESEND_INVOICE],
+    RouterIntent.LIST_INVOICES: [RouterTool.LIST_INVOICES],
     RouterIntent.GENERAL_QUESTION: [RouterTool.NONE, RouterTool.GET_INVOICE_STATUS],
     RouterIntent.UNKNOWN: [RouterTool.NONE],
 }
@@ -145,6 +149,7 @@ INTENT_TOOL_MAPPING: dict[RouterIntent, list[RouterTool]] = {
 # States from which each tool can be called
 TOOL_VALID_STATES: dict[RouterTool, list[str]] = {
     RouterTool.GET_INVOICE_STATUS: ["*"],  # Any state
+    RouterTool.LIST_INVOICES: ["*"],  # Any state (no invoice context needed)
     RouterTool.APPROVE_INVOICE: ["awaiting_approval"],
     RouterTool.REJECT_INVOICE: ["awaiting_approval"],
     RouterTool.CONFIRM_PAYMENT: ["payment_pending"],

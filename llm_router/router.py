@@ -44,6 +44,17 @@ class StubLLMProvider:
 
     # Keyword patterns for intent detection
     INTENT_PATTERNS: dict[RouterIntent, list[re.Pattern[str]]] = {
+        RouterIntent.LIST_INVOICES: [
+            re.compile(r"\b(all|my|show|list)\s+(active\s+)?invoices\b", re.I),
+            re.compile(r"\blist\s+(all|my)?\s*invoices?\b", re.I),
+            re.compile(r"\bshow\s+(me\s+)?(all\s+)?(my\s+)?invoices?\b", re.I),
+            re.compile(r"\bwhat\s+invoices\b", re.I),
+            re.compile(r"\bwhich\s+invoices\b", re.I),
+            re.compile(r"\binvoices\s+(do\s+)?i\s+have\b", re.I),
+            re.compile(r"\bpending\s+invoices\b", re.I),
+            re.compile(r"\bopen\s+invoices\b", re.I),
+            re.compile(r"\bactive\s+invoices\b", re.I),
+        ],
         RouterIntent.INVOICE_APPROVAL: [
             re.compile(r"\bapprove\b", re.I),
             re.compile(r"\baccept\b", re.I),
@@ -192,6 +203,7 @@ class StubLLMProvider:
         """Map intent to primary tool."""
         tool_mapping = {
             RouterIntent.INVOICE_QUESTION: RouterTool.GET_INVOICE_STATUS,
+            RouterIntent.LIST_INVOICES: RouterTool.LIST_INVOICES,
             RouterIntent.INVOICE_APPROVAL: RouterTool.APPROVE_INVOICE,
             RouterIntent.INVOICE_REJECTION: RouterTool.REJECT_INVOICE,
             RouterIntent.PAYMENT_CONFIRMATION: RouterTool.CONFIRM_PAYMENT,
@@ -226,9 +238,9 @@ class StubLLMProvider:
         if invoice_id:
             decision["arguments"]["invoice_id"] = invoice_id
 
-        # Check for missing invoice ID
-        if tool not in [RouterTool.NONE] and not invoice_id:
-            if intent not in [RouterIntent.GENERAL_QUESTION, RouterIntent.UNKNOWN]:
+        # Check for missing invoice ID (not needed for list_invoices)
+        if tool not in [RouterTool.NONE, RouterTool.LIST_INVOICES] and not invoice_id:
+            if intent not in [RouterIntent.GENERAL_QUESTION, RouterIntent.UNKNOWN, RouterIntent.LIST_INVOICES]:
                 decision["requires_clarification"] = True
                 decision["clarification_prompt"] = (
                     "Which invoice would you like me to help with? "
