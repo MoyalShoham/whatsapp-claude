@@ -224,7 +224,7 @@ class InvoiceData(BaseModel):
             "payment_terms": self.payment_terms.model_dump(),
             "notes": self.notes,
             "terms_and_conditions": self.terms_and_conditions,
-            "metadata": self.metadata,
+            "extra_metadata": self.metadata,
         }
 
 

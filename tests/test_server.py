@@ -30,8 +30,8 @@ def client():
 
     store = InMemoryInvoiceStore()
     mock_provider = MockLLMProvider()
-    router = LLMRouter(llm_provider=mock_provider)
-    orchestrator = InvoiceOrchestrator(store=store, router=router)
+    # Note: InvoiceOrchestrator doesn't use router - that's ConversationalAgent's responsibility
+    orchestrator = InvoiceOrchestrator(store=store)
 
     class TestState:
         def __init__(self):

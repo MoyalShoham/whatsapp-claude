@@ -65,8 +65,8 @@ def mock_provider() -> MockLLMProvider:
 @pytest.fixture
 def orchestrator(store: InMemoryInvoiceStore, mock_provider: MockLLMProvider) -> InvoiceOrchestrator:
     """Orchestrator with mock provider."""
-    router = LLMRouter(llm_provider=mock_provider)
-    return InvoiceOrchestrator(store=store, router=router)
+    # Note: InvoiceOrchestrator doesn't use router - that's ConversationalAgent's responsibility
+    return InvoiceOrchestrator(store=store)
 
 
 @pytest.fixture
