@@ -65,7 +65,7 @@ The ConversationalAgent provides a natural language interface:
 | State Machine Awareness | Strict lifecycle enforcement with workaround suggestions |
 | Invoice Creation Flow | Progressive data collection, VAT handling |
 | Edit & Recreate Flow | Guides reject + recreate when edits requested |
-| Israeli VAT | 17% default, gross/net handling |
+| Israeli VAT | 18% default, gross/net handling |
 | Reminders & Overdue | Time-aware suggestions for follow-ups |
 | VIP Detection | Returning customer recognition (silent) |
 | Error Handling | What happened → Why → What can be done |
