@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ class ReminderTask(BaseTask):
 
     def __init__(
         self,
-        send_message: Callable[[str, str], asyncio.coroutine],
+        send_message: Callable[[str, str], Awaitable[Any]],
         get_invoice: Callable[[str], Optional[dict[str, Any]]],
     ):
         """

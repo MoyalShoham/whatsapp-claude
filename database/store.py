@@ -292,7 +292,7 @@ class DatabaseInvoiceStore:
                 "created_at": invoice.created_at.isoformat(),
                 "updated_at": invoice.updated_at.isoformat(),
                 "closed_at": invoice.closed_at.isoformat() if invoice.closed_at else None,
-                "metadata": invoice.metadata,
+                "metadata": invoice.extra_metadata,
             }
 
     def update_invoice(
@@ -333,10 +333,10 @@ class DatabaseInvoiceStore:
             if due_date is not None:
                 invoice.due_date = due_date
             if metadata is not None:
-                if invoice.metadata:
-                    invoice.metadata.update(metadata)
+                if invoice.extra_metadata:
+                    invoice.extra_metadata.update(metadata)
                 else:
-                    invoice.metadata = metadata
+                    invoice.extra_metadata = metadata
 
             return True
 

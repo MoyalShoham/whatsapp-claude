@@ -78,8 +78,8 @@ class InvoiceModel(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     closed_at = Column(DateTime, nullable=True)
 
-    # Metadata
-    metadata = Column(JSON, nullable=True)
+    # Extra metadata (renamed from 'metadata' to avoid SQLAlchemy reserved name)
+    extra_metadata = Column(JSON, nullable=True)
 
     # Relationships
     customer = relationship("CustomerModel", back_populates="invoices")

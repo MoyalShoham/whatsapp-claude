@@ -4,7 +4,7 @@ from agents.invoice_agent.agent import InvoiceAgent
 from agents.invoice_agent.intent_classifier import IntentClassifier, ClassifiedIntent
 from agents.invoice_agent.orchestrator import (
     InvoiceOrchestrator,
-    OrchestrationResult,
+    ToolExecutionResult,
     InvoiceEvent,
     EventBus,
     EventSubscriber,
@@ -29,7 +29,7 @@ __all__ = [
     "ClassifiedIntent",
     # Orchestration
     "InvoiceOrchestrator",
-    "OrchestrationResult",
+    "ToolExecutionResult",
     "InvoiceEvent",
     "EventBus",
     "EventSubscriber",
