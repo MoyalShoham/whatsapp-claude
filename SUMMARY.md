@@ -2,7 +2,15 @@
 
 ## Overview
 
-A production-ready Invoice Automation Agent that handles invoice lifecycle management through WhatsApp Business API. Built with a state machine architecture, LLM-powered intent classification, and persistent storage.
+A production-ready Invoice Automation Agent that handles invoice lifecycle management through WhatsApp Business API. Built with a state machine architecture, LLM-powered intent classification, persistent storage, and real WhatsApp integration.
+
+**Key Features**:
+- ✅ Real WhatsApp Business API integration
+- ✅ Conversational AI powered by Claude (Anthropic)
+- ✅ Strict FSM-based invoice lifecycle management
+- ✅ Webhook-based message handling with signature verification
+- ✅ Audit logging and event system
+- ✅ Production-ready error handling and retry logic
 
 ## Architecture
 
@@ -112,11 +120,102 @@ The ConversationalAgent provides a natural language interface:
 | `dispute` | Raise dispute | DisputeTool |
 | `general_inquiry` | General questions | - |
 
+## WhatsApp Integration
+
+### Production-Ready WhatsApp Business API Integration
+
+The system includes complete WhatsApp Business API integration with:
+- Webhook endpoints for receiving messages
+- Signature verification for security
+- Async message handling
+- Interactive buttons support
+- Template message support
+- Conversation history tracking
+
+### How It Works
+
+1. **Webhook Verification**: Meta verifies your webhook endpoint during setup
+2. **Message Reception**: Incoming messages are received via POST to `/webhook`
+3. **Signature Verification**: Optional but recommended for production
+4. **Processing**: Messages are processed through ConversationalAgent
+5. **Tool Execution**: Valid tool calls execute through InvoiceOrchestrator
+6. **Response**: Agent response is sent back via WhatsApp Business API
+
+### Security Features
+
+- ✅ **Webhook Signature Verification**: Validates requests from Meta
+- ✅ **Token-based Authentication**: Verify token for webhook setup
+- ✅ **No Secrets in Code**: All credentials via environment variables
+- ✅ **Audit Logging**: All messages logged with customer correlation
+- ✅ **Error Handling**: Graceful degradation on API failures
+
+### WhatsApp Setup Steps
+
+1. **Create Meta Developer Account**
+   - Go to https://developers.facebook.com/
+   - Create a new app with WhatsApp Business API
+
+2. **Get Credentials**
+   ```
+   WHATSAPP_API_TOKEN        - From Meta App Dashboard
+   WHATSAPP_PHONE_NUMBER_ID  - Your WhatsApp Business phone number ID
+   WHATSAPP_VERIFY_TOKEN     - Create a random secret token
+   META_APP_SECRET           - Optional, for signature verification
+   ```
+
+3. **Configure Webhook**
+   - URL: `https://your-domain.com/webhook`
+   - Verify Token: Same as `WHATSAPP_VERIFY_TOKEN`
+   - Subscribe to: `messages`
+
+4. **Test Connection**
+   ```bash
+   # Start server
+   uvicorn server.app:app --host 0.0.0.0 --port 8000
+
+   # Send test message from WhatsApp
+   # Agent will respond automatically
+   ```
+
+### Message Flow Example
+
+```
+User (WhatsApp): "I approve INV-001"
+         ↓
+WhatsApp Business API → Webhook (/webhook)
+         ↓
+FastAPI Server → ConversationalAgent
+         ↓
+Claude API (LLM) → Router Decision
+         ↓
+InvoiceOrchestrator → FSM Validation
+         ↓
+Tool Execution (approve_invoice)
+         ↓
+Response Generation → WhatsApp API
+         ↓
+User (WhatsApp): "Invoice INV-001 has been approved."
+```
+
+### Supported Message Types
+
+- ✅ **Text Messages**: Full support
+- ✅ **Interactive Buttons**: Up to 3 buttons per message
+- ✅ **Template Messages**: Pre-approved templates
+- ⚠️ **Media Messages**: Logged but not processed (future enhancement)
+
+### Rate Limits & Best Practices
+
+- Meta enforces rate limits on WhatsApp Business API
+- Use `BackgroundTasks` for async processing (already implemented)
+- Always return 200 quickly to acknowledge receipt
+- Handle errors gracefully without exposing internals
+
 ## Setup
 
 ### Prerequisites
 - Python 3.11+
-- WhatsApp Business API access
+- WhatsApp Business API access (Meta Developer account)
 - Anthropic API key (for Claude)
 
 ### Installation
