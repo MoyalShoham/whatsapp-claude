@@ -24,8 +24,8 @@ def mock_provider() -> MockLLMProvider:
 @pytest.fixture
 def adapter(store: InMemoryInvoiceStore, mock_provider: MockLLMProvider) -> WhatsAppAdapter:
     """Create WhatsApp adapter with mock provider."""
-    router = LLMRouter(llm_provider=mock_provider)
-    orchestrator = InvoiceOrchestrator(store=store, router=router)
+    # Note: InvoiceOrchestrator doesn't use router - that's ConversationalAgent's responsibility
+    orchestrator = InvoiceOrchestrator(store=store)
     return WhatsAppAdapter(orchestrator=orchestrator)
 
 
