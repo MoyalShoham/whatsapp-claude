@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
-from agents.invoice_agent import InvoiceOrchestrator, OrchestrationResult
+from agents.invoice_agent import InvoiceOrchestrator, ToolExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,7 @@ class WhatsAppAdapter:
         """Get conversation history for a phone number."""
         return self._conversations.get(phone, [])
 
-    def _format_response(self, result: OrchestrationResult) -> str:
+    def _format_response(self, result: ToolExecutionResult) -> str:
         """
         Format orchestration result for WhatsApp.
 

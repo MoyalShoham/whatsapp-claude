@@ -267,7 +267,7 @@ class PaymentFollowUpTask(BaseTask):
 
     def __init__(
         self,
-        send_message: Callable[[str, str], asyncio.coroutine],
+        send_message: Callable[[str, str], Awaitable[Any]],
         get_invoice: Callable[[str], Optional[dict[str, Any]]],
         update_metadata: Callable[[str, dict[str, Any]], None],
     ):
@@ -576,7 +576,7 @@ class InvoiceScheduler:
 
 
 async def setup_invoice_scheduler(
-    send_message: Callable[[str, str], asyncio.coroutine],
+    send_message: Callable[[str, str], Awaitable[Any]],
     get_invoice: Callable[[str], Optional[dict[str, Any]]],
     list_invoices: Callable[..., list[dict[str, Any]]],
     update_metadata: Callable[[str, dict[str, Any]], None],
