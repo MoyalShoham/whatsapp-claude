@@ -1,10 +1,13 @@
 """
-WhatsApp Adapter - Bridge between WhatsApp messages and Invoice Agent.
+WhatsApp Adapter - Bridge between WhatsApp messages and Conversational Agent.
 
 This adapter:
 1. Receives incoming WhatsApp messages
-2. Routes them through the Invoice Orchestrator
+2. Routes them through the ConversationalAgent
 3. Returns formatted responses for WhatsApp
+
+Note: The production server (server/app.py) uses ConversationalAgent directly.
+This adapter is primarily for testing and simulator use.
 """
 
 import logging
@@ -12,7 +15,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
-from agents.invoice_agent import InvoiceOrchestrator, ToolExecutionResult
+from agents.conversational_agent import ConversationalAgent, AgentMode
+from agents.invoice_agent import InvoiceOrchestrator
+from llm_router import get_default_provider
+from tools.base import InMemoryInvoiceStore
 
 logger = logging.getLogger(__name__)
 
@@ -39,40 +45,50 @@ class WhatsAppResponse:
 
 class WhatsAppAdapter:
     """
-    Adapter between WhatsApp channel and Invoice Agent.
+    Adapter between WhatsApp channel and Conversational Agent.
 
     Handles:
     - Message formatting
     - Conversation context tracking
-    - Response generation
+    - Response generation via ConversationalAgent
     """
 
     def __init__(
         self,
-        orchestrator: Optional[InvoiceOrchestrator] = None,
+        agent: Optional[ConversationalAgent] = None,
         max_history: int = 10,
+        mode: AgentMode = AgentMode.SIMULATOR,
     ):
         """
         Initialize the WhatsApp adapter.
 
         Args:
-            orchestrator: Invoice orchestrator instance. Creates new if not provided.
+            agent: Conversational agent instance. Creates new if not provided.
             max_history: Maximum messages to keep in conversation history per user.
+            mode: Agent mode (SIMULATOR or PRODUCTION).
         """
-        self.orchestrator = orchestrator or InvoiceOrchestrator()
+        if agent is None:
+            # Create default agent with orchestrator and provider
+            store = InMemoryInvoiceStore()
+            orchestrator = InvoiceOrchestrator(store=store)
+            llm_provider = get_default_provider()
+            agent = ConversationalAgent(
+                orchestrator=orchestrator,
+                llm_provider=llm_provider,
+                mode=mode,
+            )
+
+        self.agent = agent
         self.max_history = max_history
 
         # Track conversation history per phone number
         self._conversations: dict[str, list[dict[str, Any]]] = {}
 
-        # Track active invoice context per phone number
-        self._active_invoice: dict[str, Optional[str]] = {}
-
     def handle_incoming(
         self,
         phone: str,
         text: str,
-        invoice_id: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> str:
         """
         Handle an incoming WhatsApp message.
@@ -80,7 +96,7 @@ class WhatsAppAdapter:
         Args:
             phone: Sender's phone number.
             text: Message text.
-            invoice_id: Optional invoice ID context.
+            message_id: Optional WhatsApp message ID for correlation.
 
         Returns:
             Response text for WhatsApp.
@@ -90,39 +106,24 @@ class WhatsAppAdapter:
         # Add to conversation history
         self._add_to_history(phone, "user", text)
 
-        # Get active invoice context if not provided
-        # Don't use cached invoice_id for list requests
-        list_keywords = ["all invoices", "my invoices", "list invoices", "show invoices", "active invoices", "pending invoices"]
-        is_list_request = any(kw in text.lower() for kw in list_keywords)
-        effective_invoice_id = None if is_list_request else (invoice_id or self._active_invoice.get(phone))
-
         # Build context with conversation history
         context = {
             "channel": "whatsapp",
             "phone": phone,
+            "message_id": message_id,
             "conversation_history": self._get_history(phone),
         }
 
-        # Process through orchestrator
+        # Process through ConversationalAgent
         try:
-            result = self.orchestrator.process_message(
+            response = self.agent.process_message(
                 message=text,
-                invoice_id=effective_invoice_id,
-                customer_id=phone,  # Use phone as customer ID
+                customer_id=phone,
                 context=context,
             )
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             response = "Sorry, an error occurred while processing your message. Please try again."
-            self._add_to_history(phone, "assistant", response)
-            return response
-
-        # Update active invoice context
-        if result.invoice_id:
-            self._active_invoice[phone] = result.invoice_id
-
-        # Format response
-        response = self._format_response(result)
 
         # Add response to history
         self._add_to_history(phone, "assistant", response)
@@ -139,8 +140,6 @@ class WhatsAppAdapter:
         """
         Generic message handler interface.
 
-        This method provides compatibility with the InvoiceAgent interface.
-
         Args:
             channel: Channel name (should be "whatsapp").
             sender: Sender identifier (phone number).
@@ -153,25 +152,20 @@ class WhatsAppAdapter:
         return self.handle_incoming(
             phone=sender,
             text=message,
-            invoice_id=kwargs.get("invoice_id"),
+            message_id=kwargs.get("message_id"),
         )
-
-    def set_active_invoice(self, phone: str, invoice_id: str) -> None:
-        """Set the active invoice for a phone number."""
-        self._active_invoice[phone] = invoice_id
-
-    def get_active_invoice(self, phone: str) -> Optional[str]:
-        """Get the active invoice for a phone number."""
-        return self._active_invoice.get(phone)
 
     def clear_context(self, phone: str) -> None:
         """Clear all context for a phone number."""
         self._conversations.pop(phone, None)
-        self._active_invoice.pop(phone, None)
 
-    def create_invoice(self, invoice_id: str) -> None:
-        """Create a new invoice (convenience method)."""
-        self.orchestrator.create_invoice(invoice_id)
+    def create_invoice(self, invoice_id: str, customer_id: Optional[str] = None) -> Any:
+        """Create a new invoice (delegates to agent's orchestrator)."""
+        return self.agent.create_invoice(invoice_id, customer_id)
+
+    def get_invoice_state(self, invoice_id: str) -> Optional[str]:
+        """Get invoice state (delegates to agent's orchestrator)."""
+        return self.agent.get_invoice_state(invoice_id)
 
     def _add_to_history(self, phone: str, role: str, content: str) -> None:
         """Add a message to conversation history."""
@@ -191,41 +185,3 @@ class WhatsAppAdapter:
     def _get_history(self, phone: str) -> list[dict[str, Any]]:
         """Get conversation history for a phone number."""
         return self._conversations.get(phone, [])
-
-    def _format_response(self, result: ToolExecutionResult) -> str:
-        """
-        Format orchestration result for WhatsApp.
-
-        Args:
-            result: Orchestration result.
-
-        Returns:
-            Formatted response text.
-        """
-        # If clarification is needed
-        if result.requires_clarification and result.clarification_prompt:
-            return result.clarification_prompt
-
-        # Build response message
-        parts = [result.message]
-
-        # Add state info if available
-        if result.current_state and result.invoice_id:
-            state_display = result.current_state.replace("_", " ").title()
-            parts.append(f"\nInvoice {result.invoice_id} status: {state_display}")
-
-        # Add available actions hint
-        if result.raw_decision and not result.requires_clarification:
-            available = self.orchestrator.store.get_fsm(result.invoice_id)
-            if available:
-                triggers = available.get_available_triggers()
-                if triggers:
-                    actions = ", ".join(t.replace("_", " ") for t in triggers[:3])
-                    parts.append(f"Available actions: {actions}")
-
-        # Add warnings if any
-        if result.warnings:
-            for warning in result.warnings[:2]:  # Limit to 2 warnings
-                parts.append(f"⚠️ {warning}")
-
-        return "\n".join(parts)
